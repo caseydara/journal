@@ -8,10 +8,28 @@ import { startListening, stopListening } from '../lib/stt';
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
 export default function Assistant() {
+
+    // moods list and emoji map (put near other constants at top of Assistant.jsx)
+const MOODS = [
+    'happy','excited','proud','grateful','content','calm','productive',
+    'bored','unmotivated','annoyed','fearful','lonely','sad','depressed','shame','guilty','love'
+  ];
+  
+  const MOOD_EMOJI = {
+    happy: '😄', excited: '🤩', proud: '🏆', grateful: '🙏', content: '🙂',
+    calm: '😌', productive: '💪', bored: '😐', unmotivated: '😕',
+    annoyed: '😠', fearful: '😨', lonely: '😔', sad: '😢', depressed: '😞',
+    shame: '😳', guilty: '😖', love: '❤️'
+  };
+
+  
+
+  const [selectedMoods, setSelectedMoods] = useState([]);
   const [entries, setEntries] = useState([]);
   const [conversation, setConversation] = useState([]); // {role, text}
   const [listening, setListening] = useState(false);
   const [interimText, setInterimText] = useState('');
+  const [view, setView] = useState('mood'); // 'mood' or 'assistant'
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -51,9 +69,16 @@ export default function Assistant() {
     setConversation(prev => [...prev, { role: 'user', text }]);
   }
 
+  function toggleMood(m) {
+    setSelectedMoods(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
+  }
+
   async function requestFollowUps(latestReply) {
     try {
-      const resp = await axios.post(`${API_URL}/generate-followup`, { latestReply });
+      const resp = await axios.post(`${API_URL}/generate-followup`, {
+        latestReply,
+        moods: selectedMoods // include current moods
+      });
       return resp.data.follow_up || [];
     } catch (e) {
       console.warn('generate-followup failed', e);
@@ -239,12 +264,13 @@ export default function Assistant() {
     const summary = summaryResp?.summary || msgs.slice(-3).map(m => m.text).join(' — ');
     const takeaways = summaryResp?.takeaways || [];
     const entry = {
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
-      summary,
-      takeaways: Array.isArray(takeaways) ? takeaways : (takeaways ? [takeaways] : []),
-      raw: msgs
-    };
+        id: Date.now().toString(),
+        date: new Date().toISOString(),
+        summary,
+        takeaways: Array.isArray(takeaways) ? takeaways : (takeaways ? [takeaways] : []),
+        moods: Array.isArray(selectedMoods) ? selectedMoods : (selectedMoods ? [selectedMoods] : []),
+        raw: msgs
+      };
     await saveEntry(entry);
     const e = await loadEntries();
     setEntries(e);
@@ -256,36 +282,94 @@ export default function Assistant() {
   /* --- UI --- */
   return (
     <div style={{ padding: 20, maxWidth: 800, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <h2>Assistant</h2>
+      {view === 'mood' ? (
+        // Mood selection view
         <div>
-          <button onClick={() => { const last = conversation.slice().reverse().find(m => m.role === 'assistant'); if (last) speak(last.text); }}>Replay</button>
-          <button onClick={() => window.location.href = '/history'} style={{ marginLeft: 8 }}>History</button>
+          <h2>How are you feeling right now?</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {MOODS.map(m => {
+              const on = selectedMoods.includes(m);
+              return (
+                <button
+                  key={m}
+                  onClick={() => toggleMood(m)}
+                  aria-pressed={on}
+                  style={{
+                    padding: '8px 10px',
+                    borderRadius: 20,
+                    border: on ? '1px solid #4a90e2' : '1px solid #ddd',
+                    background: on ? '#eaf4ff' : 'white',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8
+                  }}
+                >
+                  <span style={{ fontSize: 16 }}>{MOOD_EMOJI[m] || '•'}</span>
+                  <span style={{ textTransform: 'capitalize' }}>{m}</span>
+                </button>
+              );
+            })}
+          </div>
+  
+          <div style={{ marginTop: 16 }}>
+            <button
+              onClick={() => {
+                // move to assistant view; seed opener according to mood
+                const opener = selectedMoods.length > 0
+                  ? `You said you feel ${selectedMoods.join(', ')}. Tell me more.`
+                  : 'How are you doing today?';
+                pushAssistant(opener);
+                speak(opener);
+                setView('assistant');
+                // start listening after a short delay
+                setTimeout(() => startAutoListenIfReady(), 600);
+              }}
+              disabled={false}
+            >
+              Next
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div style={{ marginTop: 12, border: '1px solid #eee', padding: 12, minHeight: 150 }}>
-        {conversation.map((m, i) => (
-          <div key={i} style={{ textAlign: m.role === 'assistant' ? 'left' : 'right', marginBottom: 8 }}>
-            <div style={{ display: 'inline-block', padding: 8, borderRadius: 6, background: m.role === 'assistant' ? '#fff' : '#4a90e2', color: m.role === 'assistant' ? '#111' : '#fff' }}>
-              {m.text}
+      ) : (
+        // Assistant view
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <h2>Assistant</h2>
+            <div>
+              <button onClick={() => { const last = conversation.slice().reverse().find(m => m.role === 'assistant'); if (last) speak(last.text); }}>Replay</button>
+              <button onClick={() => setView('mood')} style={{ marginLeft: 8 }}>Back</button>
+              <button onClick={() => window.location.href = '/history'} style={{ marginLeft: 8 }}>History</button>
             </div>
           </div>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 12, color: '#666' }}>Listening: {listening ? 'Yes' : 'No'}</div>
-        <div style={{ marginTop: 8, minHeight: 24, color: '#333' }}>{interimText || <em>Say something when you're ready...</em>}</div>
-
-        <div style={{ marginTop: 12 }}>
-          <button onClick={handleManualStart}>{listening ? 'Listening...' : 'Start Listening'}</button>
-          <button onClick={handleManualStop} style={{ marginLeft: 8 }}>Pause</button>
-          <button onClick={finishAndSave} style={{ marginLeft: 8 }}>Finish & Save</button>
-        </div>
-      </div>
-
-      <div style={{ marginTop: 26 }}>
+  
+          {selectedMoods.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <strong>Current mood:</strong>&nbsp;
+              {selectedMoods.map(m => <span key={m} style={{ marginRight: 8 }}>{MOOD_EMOJI[m]} {m}</span>)}
+            </div>
+          )}
+  
+          <div style={{ marginTop: 12, border: '1px solid #eee', padding: 12, minHeight: 150 }}>
+            {conversation.map((m, i) => (
+              <div key={i} style={{ textAlign: m.role === 'assistant' ? 'left' : 'right', marginBottom: 8 }}>
+                <div style={{ display: 'inline-block', padding: 8, borderRadius: 6, background: m.role === 'assistant' ? '#fff' : '#4a90e2', color: m.role === 'assistant' ? '#111' : '#fff' }}>
+                  {m.text}
+                </div>
+              </div>
+            ))}
+          </div>
+  
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: '#666' }}>Listening: {listening ? 'Yes' : 'No'}</div>
+            <div style={{ marginTop: 8, minHeight: 24, color: '#333' }}>{interimText || <em>Say something when you're ready...</em>}</div>
+            <div style={{ marginTop: 12 }}>
+              <button onClick={handleManualStart}>{listening ? 'Listening...' : 'Start Listening'}</button>
+              <button onClick={handleManualStop} style={{ marginLeft: 8 }}>Pause</button>
+              <button onClick={finishAndSave} style={{ marginLeft: 8 }}>Finish & Save</button>
+            </div>
+          </div>
+          <div style={{ marginTop: 26 }}>
         <h3>Recent Entries</h3>
         <ul>
           {entries.map(e => (
@@ -296,6 +380,11 @@ export default function Assistant() {
           ))}
         </ul>
       </div>
+        </div>
+
+        
+      )}
+      {/* recent entries list always visible below */}
     </div>
   );
 }

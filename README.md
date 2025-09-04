@@ -18,6 +18,7 @@ npm install
 
 # Start app (Expo)
 npm start
+```
 
 ##🎬 Presentation Video
 

@@ -274,7 +274,7 @@ export default function Assistant() {
   ) : (
     <div className="app-body">
       <div className="app-header">
-        <h2 className="app-title">Assistant</h2>
+        <h2 className="app-title">Journaling Pal</h2>
         <div className="toolbar">
           <button className="btn" onClick={() => setView("mood")}>Back</button>
           <button className="btn" onClick={() => (window.location.href = "/history")}>History</button>

@@ -37,14 +37,19 @@ function tryParseJSON(text) {
   }
 }
 
-/* --------------- Existing OpenAI routes --------------- */
+/* --------------- /generate-followup (Hume optional, OpenAI fallback) --------------- */
 app.post('/generate-followup', async (req, res) => {
   const { latestReply, contextSummary = '', maxFollowups = 3, moods = [] } = req.body || {};
   logToFile({ route: '/generate-followup', body: req.body });
   if (!latestReply) return res.status(400).json({ error: 'missing latestReply' });
 
-  const system = `You are a private, empathetic journaling companion whose goal is to make daily self-reflection simple, consistent, and insightful. Use a warm, nonjudgmental, conversational tone. Produce 2–3 short, open-ended follow-up questions that invite reflection, clarify feelings, or suggest small next steps. Return JSON only in the form {"follow_up": ["...","..."]}. Keep questions under 12 words when possible. Do not add any commentary outside the JSON.`;
+  // Control whether to try Hume on server (useful for experiments). Set in server/.env:
+  // USE_HUME_FOR_FOLLOWUPS=1
+  const useHume = String(process.env.USE_HUME_FOR_FOLLOWUPS || '').trim() === '1';
+  const humeConfigId = process.env.HUME_CONFIG_ID || process.env.NEXT_PUBLIC_HUME_CONFIG_ID;
 
+  // Shared system / user prompt for OpenAI fallback
+  const system = `You are a private, empathetic journaling companion whose goal is to make daily self-reflection simple, consistent, and insightful. Use a warm, nonjudgmental, conversational tone. Produce 2–3 short, open-ended follow-up questions that invite reflection, clarify feelings, or suggest small next steps. Return JSON only in the form {"follow_up": ["...","..."]}. Keep questions under 12 words when possible. Do not add any commentary outside the JSON.`;
   const moodText = Array.isArray(moods) && moods.length ? `User-reported moods: ${moods.join(', ')}.` : 'No explicit user-reported moods.';
   const user = `
 Latest reply: """${latestReply}"""
@@ -54,6 +59,25 @@ Context: """${contextSummary}"""
 Now produce up to ${maxFollowups} short, empathetic, conversational follow-up questions (JSON only).
 `;
 
+  // Optional Hume server branch: currently we only support token fetch on server.
+  // If you have a server-side EVI API available and want to call it here, implement it
+  // according to your hume SDK version. For safety, we fallback to OpenAI if Hume is not configured.
+  if (useHume) {
+    try {
+      // Note: many Hume server SDK patterns expect different method names / auth.
+      // If you have a server-side EVI chat API and SDK method, call it here and return parsed result.
+      // Example placeholder (not executed): const humeResp = await someHumeServerCall(...);
+      // If not implemented, fall through to OpenAI below.
+      // For now we log that Hume was requested server-side and fall back:
+      logToFile({ route: '/generate-followup', note: 'USE_HUME_FOR_FOLLOWUPS enabled but server-side Hume call not implemented; falling back to OpenAI.' });
+    } catch (humeErr) {
+      console.warn('Hume attempt failed, falling back to OpenAI:', humeErr?.message || humeErr);
+      logToFile({ route: '/generate-followup', humeError: String(humeErr) });
+      // fall through to OpenAI fallback
+    }
+  }
+
+  // OpenAI fallback (existing)
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
@@ -64,11 +88,9 @@ Now produce up to ${maxFollowups} short, empathetic, conversational follow-up qu
       temperature: 0.6,
       max_tokens: 200
     });
-
     const choice = response.choices && response.choices[0];
     const text = choice?.message?.content ?? (typeof choice === 'string' ? choice : null);
     logToFile({ route: '/generate-followup', llmResponse: text });
-
     // robust parse
     let parsed = tryParseJSON(text || '');
     if (!parsed) {
@@ -77,16 +99,12 @@ Now produce up to ${maxFollowups} short, empathetic, conversational follow-up qu
         try { parsed = JSON.parse(jsonMatch[1]); } catch (e) { parsed = null; }
       }
     }
-
     if (parsed && Array.isArray(parsed.follow_up)) {
       const filtered = parsed.follow_up.map(s => s.trim()).filter(s => s && !/tell me more about that/i.test(s)).slice(0, maxFollowups);
       if (filtered.length) return res.json({ follow_up: filtered });
     }
-
-    // fallback line-split
     const lines = (text || '').split(/\n/).map(l => l.trim()).filter(Boolean).slice(0, maxFollowups);
     if (lines.length) return res.json({ follow_up: lines });
-
     return res.json({
       follow_up: [
         "Tell me more about that.",
@@ -100,19 +118,17 @@ Now produce up to ${maxFollowups} short, empathetic, conversational follow-up qu
     return res.status(500).json({ error: 'LLM error', details: err?.message || err });
   }
 });
-
+/* --------------- summarization route (unchanged) --------------- */
 app.post('/summarize', async (req, res) => {
   const { messages = [], contextSummary = '' } = req.body || {};
   logToFile({ route: '/summarize', body: req.body });
   if (!messages || messages.length === 0) return res.status(400).json({ error: 'missing messages' });
-
   const system = `You are a concise journaling summarizer. Output JSON only with keys: summary (1-3 sentences), takeaways (array), mood (1-10), moodReason (short).`;
   const convoText = messages.map(m => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.text}`).join('\n');
   const user = `Conversation:
 """${convoText}"""
 Context: """${contextSummary}"""
 Return JSON with summary, takeaways, mood, moodReason.`;
-
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
@@ -123,11 +139,9 @@ Return JSON with summary, takeaways, mood, moodReason.`;
       temperature: 0.3,
       max_tokens: 300
     });
-
     const choice = response.choices && response.choices[0];
     const text = choice?.message?.content ?? null;
     logToFile({ route: '/summarize', llmResponse: text });
-
     const parsed = tryParseJSON(text || '');
     if (parsed && parsed.summary) {
       const out = {
@@ -139,7 +153,6 @@ Return JSON with summary, takeaways, mood, moodReason.`;
       };
       return res.json(out);
     }
-
     const simpleSummary = convoText.split('\n').slice(-3).map(s => s.replace(/^(User:|Assistant:)\s*/, '')).join(' — ');
     return res.json({ summary: simpleSummary, takeaways: [], mood: null, moodReason: '' });
   } catch (err) {
@@ -149,11 +162,7 @@ Return JSON with summary, takeaways, mood, moodReason.`;
   }
 });
 
-/* ---------------- Hume token endpoint ----------------
-   This fetches a short-lived access token using your HUME_API_KEY and HUME_SECRET_KEY.
-   Client calls GET /hume-token and receives { accessToken }.
-   Ensure server/.env has HUME_API_KEY and HUME_SECRET_KEY.
-*/
+/* ---------------- Hume token endpoint ---------------- */
 app.get('/hume-token', async (req, res) => {
   try {
     const apiKey = process.env.HUME_API_KEY;
@@ -161,7 +170,6 @@ app.get('/hume-token', async (req, res) => {
     if (!apiKey || !secretKey) {
       return res.status(500).json({ error: 'Hume API key/secret not configured' });
     }
-    // fetchAccessToken returns a token string
     const accessToken = await fetchAccessToken({ apiKey: String(apiKey), secretKey: String(secretKey) });
     return res.json({ accessToken });
   } catch (err) {
@@ -170,9 +178,7 @@ app.get('/hume-token', async (req, res) => {
   }
 });
 
-/* Optional: demo TTS endpoint that serves a static demo file if you want to test audio playback before wiring Hume.
-   Place a file demo_tts_placeholder.wav in the server/ directory or change the path.
-*/
+/* Optional demo TTS endpoint */
 app.post('/tts-demo', (req, res) => {
   const demoPath = path.join(__dirname, 'demo_tts_placeholder.wav');
   if (fs.existsSync(demoPath)) {

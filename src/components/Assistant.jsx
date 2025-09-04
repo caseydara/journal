@@ -1,293 +1,207 @@
 // src/components/Assistant.jsx
-import React, { useEffect, useRef, useState } from 'react';
-import axios from 'axios';
-import { speak } from '../lib/voice';
-import { loadEntries, saveEntry } from '../lib/storage';
-import { buildPromptsForToday } from '../lib/promptBuilder';
-import { startListening, stopListening } from '../lib/stt';
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+import React, { useEffect, useRef, useState } from "react";
+import { useVoice, VoiceReadyState } from "@humeai/voice-react";
+import { loadEntries, saveEntry } from "../lib/storage";
+
+const EVI_CONFIG_ID =
+  process.env.NEXT_PUBLIC_HUME_CONFIG_ID ||
+  "e542db5e-a7f9-409f-914f-c2a060d7dc5b";
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
+
+// Mood definitions
+const MOODS = [
+  "happy","excited","proud","grateful","content","calm","productive",
+  "bored","unmotivated","annoyed","fearful","lonely","sad","depressed",
+  "shame","guilty","love"
+];
+const MOOD_EMOJI = {
+  happy: "😄", excited: "🤩", proud: "🏆", grateful: "🙏", content: "🙂",
+  calm: "😌", productive: "💪", bored: "😐", unmotivated: "😕", annoyed: "😠",
+  fearful: "😨", lonely: "😔", sad: "😢", depressed: "😞", shame: "😳",
+  guilty: "😖", love: "❤️"
+};
+
+// Simple positive/negative mood classifier
+const POSITIVE_MOODS = new Set([
+  "happy","excited","proud","grateful","content","calm","productive","love"
+]);
+const NEGATIVE_MOODS = new Set([
+  "bored","unmotivated","annoyed","fearful","lonely","sad","depressed","shame","guilty"
+]);
 
 export default function Assistant() {
-
-    // moods list and emoji map (put near other constants at top of Assistant.jsx)
-const MOODS = [
-    'happy','excited','proud','grateful','content','calm','productive',
-    'bored','unmotivated','annoyed','fearful','lonely','sad','depressed','shame','guilty','love'
-  ];
-  
-  const MOOD_EMOJI = {
-    happy: '😄', excited: '🤩', proud: '🏆', grateful: '🙏', content: '🙂',
-    calm: '😌', productive: '💪', bored: '😐', unmotivated: '😕',
-    annoyed: '😠', fearful: '😨', lonely: '😔', sad: '😢', depressed: '😞',
-    shame: '😳', guilty: '😖', love: '❤️'
-  };
-
-  
+  const {
+    connect,
+    disconnect,
+    readyState,
+    messages,
+    sendAssistantInput,
+  } = useVoice();
 
   const [selectedMoods, setSelectedMoods] = useState([]);
   const [entries, setEntries] = useState([]);
-  const [conversation, setConversation] = useState([]); // {role, text}
-  const [listening, setListening] = useState(false);
-  const [interimText, setInterimText] = useState('');
-  const [view, setView] = useState('mood'); // 'mood' or 'assistant'
+  const [view, setView] = useState("mood");
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState(null);
+  const [pendingOpener, setPendingOpener] = useState(null);
 
-  const recognitionRef = useRef(null);
-  const silenceTimerRef = useRef(null);
-  const silenceTimeout = 900; // ms to consider silence -> end-of-turn
+  const sessionSourceRef = useRef(null);
 
-  const assistantSpeakingRef = useRef(false);
-  const finalizeTimerRef = useRef(null);
-  const stopPausedRef = useRef(false); // NEW: pause flag when user hits Stop
-  const GRACE_PERIOD = 600; // ms extra grace after STT signals silence
-
+  // Load history on mount
   useEffect(() => {
     (async () => {
       const e = await loadEntries();
-      setEntries(e);
-      const opener = 'What did you do today?';
-      pushAssistant(opener);
-      speak(opener);
-      // start listening after assistant speaks
-      setTimeout(() => startAutoListenIfReady(), 600);
+      setEntries(e || []);
     })();
-
-    return () => {
-      clearSilenceTimer();
-      clearFinalizeTimer();
-      if (recognitionRef.current) {
-        try { stopListening(recognitionRef.current); } catch (e) {}
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* --- helpers --- */
-  function pushAssistant(text) {
-    setConversation(prev => [...prev, { role: 'assistant', text }]);
-  }
-  function pushUser(text) {
-    setConversation(prev => [...prev, { role: 'user', text }]);
-  }
+  // Once connected, send the opener if one is pending
+  useEffect(() => {
+    if (readyState === VoiceReadyState.OPEN && pendingOpener) {
+      sendAssistantInput(pendingOpener);
+      setPendingOpener(null);
+    }
+  }, [readyState, pendingOpener, sendAssistantInput]);
 
   function toggleMood(m) {
-    setSelectedMoods(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
+    setSelectedMoods((prev) =>
+      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
+    );
   }
 
-  async function requestFollowUps(latestReply) {
-    try {
-      const resp = await axios.post(`${API_URL}/generate-followup`, {
-        latestReply,
-        moods: selectedMoods // include current moods
-      });
-      return resp.data.follow_up || [];
-    } catch (e) {
-      console.warn('generate-followup failed', e);
-      return null;
-    }
+  function classifyMoodSet(moods) {
+    const positives = moods.filter((m) => POSITIVE_MOODS.has(m)).length;
+    const negatives = moods.filter((m) => NEGATIVE_MOODS.has(m)).length;
+    if (positives > negatives) return "positive";
+    if (negatives > positives) return "negative";
+    return "neutral";
   }
 
-  async function requestSummary(messages) {
-    try {
-      const resp = await axios.post(`${API_URL}/summarize`, { messages });
-      return resp.data;
-    } catch (e) {
-      console.warn('summarize failed', e);
-      return null;
-    }
-  }
+  function buildProgressiveOpener(moods, lastEntry) {
+    if (!moods.length) return "How are you feeling today?";
 
-  function clearSilenceTimer() {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  }
-  function scheduleSilenceFinalize(finalCallback) {
-    clearSilenceTimer();
-    silenceTimerRef.current = setTimeout(() => {
-      silenceTimerRef.current = null;
-      finalCallback();
-    }, silenceTimeout);
-  }
+    const todayLabel = classifyMoodSet(moods);
+    const todayText = moods.join(", ");
 
-  function clearFinalizeTimer() {
-    if (finalizeTimerRef.current) {
-      clearTimeout(finalizeTimerRef.current);
-      finalizeTimerRef.current = null;
-    }
-  }
-
-  function startAutoListenIfReady() {
-    if (assistantSpeakingRef.current) return;
-    if (stopPausedRef.current) return; // respect pause
-    startContinuousListening();
-  }
-
-  /* --- STT control --- */
-  function startContinuousListening() {
-    if (listening) return;
-    setInterimText('');
-    setListening(true);
-
-    // start recognition
-    recognitionRef.current = startListening({
-      continuous: true,
-      onPartial: (partial) => {
-        // user keeps speaking -> cancel finalize timer
-        clearFinalizeTimer();
-        setInterimText(partial);
-        scheduleSilenceFinalize(() => {
-          // when STT signals silence, give a small grace before finalizing
-          clearFinalizeTimer();
-          finalizeTimerRef.current = setTimeout(async () => {
-            finalizeTimerRef.current = null;
-            await finalizeUserTurn(partial);
-          }, GRACE_PERIOD);
-        });
-      },
-      onResult: async (finalText) => {
-        clearSilenceTimer();
-        clearFinalizeTimer();
-        setInterimText('');
-        setListening(false);
-        recognitionRef.current = null;
-        await finalizeUserTurn(finalText);
-      },
-      onResultFallback: async (lastInterim) => {
-        // STT indicated likely end -> wait GRACE_PERIOD then finalize
-        clearSilenceTimer();
-        clearFinalizeTimer();
-        finalizeTimerRef.current = setTimeout(async () => {
-          finalizeTimerRef.current = null;
-          setInterimText('');
-          setListening(false);
-          recognitionRef.current = null;
-          if (lastInterim) await finalizeUserTurn(lastInterim);
-        }, GRACE_PERIOD);
-      },
-      onError: (err) => {
-        console.warn('STT error', err);
-        clearSilenceTimer();
-        clearFinalizeTimer();
-        setListening(false);
-        recognitionRef.current = null;
+    if (!lastEntry || !lastEntry.moods || !lastEntry.moods.length) {
+      // No history, just mood-aware opener
+      if (todayLabel === "positive") {
+        return `I see you’re feeling ${todayText} — that’s wonderful! Tell me more.`;
       }
-    });
+      if (todayLabel === "negative") {
+        return `I see you’re feeling ${todayText}. I’m here to listen, want to share what’s on your mind?`;
+      }
+      return `I see you’re feeling ${todayText}. How’s your day going?`;
+    }
+
+    const lastLabel = classifyMoodSet(lastEntry.moods);
+    const lastText = lastEntry.moods.join(", ");
+
+    // Compare last vs today
+    if (lastLabel === "positive" && todayLabel === "negative") {
+      return `Last time you were feeling ${lastText}, but now you’re feeling ${todayText}. Do you want to talk about what changed?`;
+    }
+    if (lastLabel === "negative" && todayLabel === "positive") {
+      return `Previously you felt ${lastText}, but now you’re feeling ${todayText} — that’s great to hear! What changed?`;
+    }
+    if (lastLabel === todayLabel) {
+      return `You mentioned feeling ${lastText} before, and now ${todayText}. Want to share more about that?`;
+    }
+
+    // Fallback
+    return `I see you’re feeling ${todayText}. How are things going since last time?`;
   }
 
-  async function stopContinuousListening() {
-    // Pause conversation and prevent auto restart until user resumes
-    stopPausedRef.current = true;
-    clearSilenceTimer();
-    clearFinalizeTimer();
-
+  /* ---------- Hume connect / disconnect ---------- */
+  async function handleConnect() {
+    setConnecting(true);
+    setConnectError(null);
     try {
-      if (recognitionRef.current) stopListening(recognitionRef.current);
-    } catch (e) { /* ignore */ }
+      const resp = await fetch(`${API_URL}/hume-token`);
+      const j = await resp.json();
+      if (!j.accessToken) throw new Error("no token");
 
-    recognitionRef.current = null;
-    setListening(false);
-    setInterimText('');
+      const lastEntry = entries.length ? entries[entries.length - 1] : null;
+      const opener = buildProgressiveOpener(selectedMoods, lastEntry);
+      setPendingOpener(opener);
 
-    // leave paused state until user manually starts listening again
-    // (do not auto-clear stopPausedRef here)
+      await connect({
+        auth: { type: "accessToken", value: j.accessToken },
+        configId: EVI_CONFIG_ID,
+        sessionSettings: { meta: { moods: selectedMoods } },
+      });
+
+      sessionSourceRef.current = "hume";
+    } catch (err) {
+      console.error("Connect error", err);
+      setConnectError(String(err));
+    } finally {
+      setConnecting(false);
+    }
   }
 
-  /* --- finalization --- */
-  async function finalizeUserTurn(text) {
-    const userText = (text || '').trim();
-    if (!userText) {
-      pushAssistant("I didn't catch that. Want to try again?");
-      speak("I didn't catch that. Want to try again?");
-      setTimeout(() => {
-        // only auto-resume if not paused
-        if (!stopPausedRef.current) startAutoListenIfReady();
-      }, 600);
+  function handleDisconnect() {
+    try { disconnect(); } catch (e) {}
+    sessionSourceRef.current = null;
+  }
+
+  function isHumeConnected() {
+    return readyState === VoiceReadyState.OPEN;
+  }
+
+  /* ---------- Save conversation ---------- */
+  async function finishAndSave() {
+    const msgs = messages
+      .filter(
+        (m) =>
+          m.message &&
+          (m.type === "user_message" || m.type === "assistant_message")
+      )
+      .map((m) => ({ role: m.message.role, text: m.message.content }));
+
+    if (sessionSourceRef.current !== "hume") {
+      console.warn("Skipping save: not a Hume session");
       return;
     }
 
-    pushUser(userText);
-    // stop listening while assistant thinks
-    stopContinuousListening();
-
-    pushAssistant('Let me think...');
-    assistantSpeakingRef.current = true;
-
-    const followUps = await requestFollowUps(userText);
-
-    // remove 'Let me think...' placeholder
-    setConversation(prev => {
-      const copy = [...prev];
-      if (copy.length > 0 && copy[copy.length - 1].role === 'assistant' && copy[copy.length - 1].text === 'Let me think...') {
-        copy.pop();
-      }
-      return copy;
-    });
-
-    if (followUps && followUps.length > 0) {
-      const follow = followUps[0];
-      pushAssistant(follow);
-      speak(follow);
-    } else {
-      const fallback = "Tell me more about that.";
-      pushAssistant(fallback);
-      speak(fallback);
+    let summary = "";
+    let takeaways = [];
+    try {
+      const resp = await fetch(`${API_URL}/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: msgs }),
+      });
+      const data = await resp.json();
+      summary = data.summary || "";
+      takeaways = Array.isArray(data.takeaways) ? data.takeaways : [];
+    } catch (e) {
+      summary = msgs.slice(-3).map((m) => m.text).join(" — ");
     }
 
-    // after assistant speech, resume listening only if not paused
-    setTimeout(() => {
-      assistantSpeakingRef.current = false;
-      if (!stopPausedRef.current) startAutoListenIfReady();
-    }, 800);
-  }
-
-  /* --- manual controls --- */
-  function handleManualStop() {
-    // Pause the conversation: stop recognition and prevent auto-restart
-    clearSilenceTimer();
-    clearFinalizeTimer();
-    stopContinuousListening();
-    setInterimText('');
-  }
-
-  function handleManualStart() {
-    // Unpause and start listening
-    stopPausedRef.current = false;
-    startAutoListenIfReady();
-  }
-
-  /* --- finish/save --- */
-  async function finishAndSave() {
-    stopContinuousListening();
-    const msgs = conversation.map(m => ({ role: m.role, text: m.text }));
-    const summaryResp = await requestSummary(msgs);
-    const summary = summaryResp?.summary || msgs.slice(-3).map(m => m.text).join(' — ');
-    const takeaways = summaryResp?.takeaways || [];
     const entry = {
-        id: Date.now().toString(),
-        date: new Date().toISOString(),
-        summary,
-        takeaways: Array.isArray(takeaways) ? takeaways : (takeaways ? [takeaways] : []),
-        moods: Array.isArray(selectedMoods) ? selectedMoods : (selectedMoods ? [selectedMoods] : []),
-        raw: msgs
-      };
+      id: Date.now().toString(),
+      date: new Date().toISOString(),
+      summary,
+      takeaways,
+      moods: selectedMoods,
+      provider: "hume",
+      raw: msgs,
+    };
+
     await saveEntry(entry);
     const e = await loadEntries();
-    setEntries(e);
-    setConversation([]);
-    pushAssistant('Saved. Would you like to check in again later?');
-    speak('Saved. Would you like to check in again later?');
+    setEntries(e || []);
   }
 
-  /* --- UI --- */
+  /* ---------- UI ---------- */
   return (
-    <div style={{ padding: 20, maxWidth: 800, margin: '0 auto' }}>
-      {view === 'mood' ? (
-        // Mood selection view
+    <div style={{ padding: 20, maxWidth: 800, margin: "0 auto" }}>
+      {view === "mood" ? (
         <div>
           <h2>How are you feeling right now?</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {MOODS.map(m => {
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {MOODS.map((m) => {
               const on = selectedMoods.includes(m);
               return (
                 <button
@@ -295,96 +209,124 @@ const MOODS = [
                   onClick={() => toggleMood(m)}
                   aria-pressed={on}
                   style={{
-                    padding: '8px 10px',
+                    padding: "8px 10px",
                     borderRadius: 20,
-                    border: on ? '1px solid #4a90e2' : '1px solid #ddd',
-                    background: on ? '#eaf4ff' : 'white',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8
+                    border: on ? "1px solid #4a90e2" : "1px solid #ddd",
+                    background: on ? "#eaf4ff" : "white",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                   }}
                 >
-                  <span style={{ fontSize: 16 }}>{MOOD_EMOJI[m] || '•'}</span>
-                  <span style={{ textTransform: 'capitalize' }}>{m}</span>
+                  <span style={{ fontSize: 16 }}>{MOOD_EMOJI[m] || "•"}</span>
+                  <span style={{ textTransform: "capitalize" }}>{m}</span>
                 </button>
               );
             })}
           </div>
-  
+
           <div style={{ marginTop: 16 }}>
-            <button
-              onClick={() => {
-                // move to assistant view; seed opener according to mood
-                const opener = selectedMoods.length > 0
-                  ? `You said you feel ${selectedMoods.join(', ')}. Tell me more.`
-                  : 'How are you doing today?';
-                pushAssistant(opener);
-                speak(opener);
-                setView('assistant');
-                // start listening after a short delay
-                setTimeout(() => startAutoListenIfReady(), 600);
-              }}
-              disabled={false}
-            >
-              Next
-            </button>
+            <button onClick={() => setView("assistant")}>Next</button>
           </div>
         </div>
       ) : (
-        // Assistant view
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}>
             <h2>Assistant</h2>
-            <div>
-              <button onClick={() => { const last = conversation.slice().reverse().find(m => m.role === 'assistant'); if (last) speak(last.text); }}>Replay</button>
-              <button onClick={() => setView('mood')} style={{ marginLeft: 8 }}>Back</button>
-              <button onClick={() => window.location.href = '/history'} style={{ marginLeft: 8 }}>History</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setView("mood")}>Back</button>
+              <button onClick={() => (window.location.href = "/history")}>
+                History
+              </button>
             </div>
           </div>
-  
+
+          {connectError && (
+            <div style={{ color: "red" }}>Connection error: {connectError}</div>
+          )}
+
           {selectedMoods.length > 0 && (
             <div style={{ marginTop: 8 }}>
               <strong>Current mood:</strong>&nbsp;
-              {selectedMoods.map(m => <span key={m} style={{ marginRight: 8 }}>{MOOD_EMOJI[m]} {m}</span>)}
+              {selectedMoods.map((m) => (
+                <span key={m} style={{ marginRight: 8 }}>
+                  {MOOD_EMOJI[m]} {m}
+                </span>
+              ))}
             </div>
           )}
-  
-          <div style={{ marginTop: 12, border: '1px solid #eee', padding: 12, minHeight: 150 }}>
-            {conversation.map((m, i) => (
-              <div key={i} style={{ textAlign: m.role === 'assistant' ? 'left' : 'right', marginBottom: 8 }}>
-                <div style={{ display: 'inline-block', padding: 8, borderRadius: 6, background: m.role === 'assistant' ? '#fff' : '#4a90e2', color: m.role === 'assistant' ? '#111' : '#fff' }}>
-                  {m.text}
-                </div>
-              </div>
-            ))}
-          </div>
-  
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: '#666' }}>Listening: {listening ? 'Yes' : 'No'}</div>
-            <div style={{ marginTop: 8, minHeight: 24, color: '#333' }}>{interimText || <em>Say something when you're ready...</em>}</div>
-            <div style={{ marginTop: 12 }}>
-              <button onClick={handleManualStart}>{listening ? 'Listening...' : 'Start Listening'}</button>
-              <button onClick={handleManualStop} style={{ marginLeft: 8 }}>Pause</button>
-              <button onClick={finishAndSave} style={{ marginLeft: 8 }}>Finish & Save</button>
-            </div>
-          </div>
-          <div style={{ marginTop: 26 }}>
-        <h3>Recent Entries</h3>
-        <ul>
-          {entries.map(e => (
-            <li key={e.id} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: '#666' }}>{new Date(e.date).toLocaleString()}</div>
-              <div>{e.summary || (Array.isArray(e.takeaways) ? e.takeaways.join(', ') : (e.takeaways || '—'))}</div>
-            </li>
-          ))}
-        </ul>
-      </div>
-        </div>
 
-        
+          <div style={{
+              marginTop: 12,
+              border: "1px solid #eee",
+              padding: 12,
+              minHeight: 150,
+            }}>
+            {messages.map((msg, i) => {
+              if (!msg.message) return null;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    textAlign:
+                      msg.message.role === "assistant" ? "left" : "right",
+                    marginBottom: 8,
+                  }}
+                >
+                  <div style={{
+                      display: "inline-block",
+                      padding: 8,
+                      borderRadius: 6,
+                      background:
+                        msg.message.role === "assistant" ? "#fff" : "#4a90e2",
+                      color:
+                        msg.message.role === "assistant" ? "#111" : "#fff",
+                    }}>
+                    {msg.message.content}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            {isHumeConnected() ? (
+              <button onClick={handleDisconnect}>End Hume Session</button>
+            ) : (
+              <button onClick={handleConnect} disabled={connecting}>
+                {connecting ? "Connecting..." : "Start Journaling Session"}
+              </button>
+            )}
+            <button onClick={finishAndSave} style={{ marginLeft: 8 }}>
+              Finish & Save
+            </button>
+          </div>
+
+          <div style={{ marginTop: 26 }}>
+            <h3>Recent Entries</h3>
+            <ul>
+              {entries.map((e) => (
+                <li key={e.id} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: "#666" }}>
+                    {new Date(e.date).toLocaleString()}
+                  </div>
+                  <div>
+                    {e.summary ||
+                      (Array.isArray(e.takeaways)
+                        ? e.takeaways.join(", ")
+                        : e.takeaways || "—")}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       )}
-      {/* recent entries list always visible below */}
     </div>
   );
 }

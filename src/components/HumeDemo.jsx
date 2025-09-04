@@ -31,6 +31,7 @@ function StartCall({ accessToken }) {
         // Must be triggered by user gesture
         connect({
           auth: { type: "accessToken", value: accessToken },
+          configId: EVI_CONFIG_ID
         })
           .then(() => {
             console.log('Hume connect success:');

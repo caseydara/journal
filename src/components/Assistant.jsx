@@ -320,10 +320,6 @@ export default function Assistant() {
         })}
       </div>
 
-      <div className="meta">
-        <span>Listening state and other small info can go here if you like.</span>
-      </div>
-
       <div className="card pad">
         <h3 style={{ marginTop: 0 }}>Recent Entries</h3>
         <ul className="list">

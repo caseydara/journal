@@ -2,6 +2,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useVoice, VoiceReadyState } from "@humeai/voice-react";
 import { loadEntries, saveEntry } from "../lib/storage";
+import { Link } from "react-router-dom";
+
 
 const EVI_CONFIG_ID =
   process.env.NEXT_PUBLIC_HUME_CONFIG_ID ||
@@ -277,7 +279,7 @@ export default function Assistant() {
         <h2 className="app-title">Journaling Pal</h2>
         <div className="toolbar">
           <button className="btn" onClick={() => setView("mood")}>Back</button>
-          <button className="btn" onClick={() => (window.location.href = "/history")}>History</button>
+          <Link className="btn" to="/history">History</Link>
           {isHumeConnected() ? (
             <button className="btn btn-plain" onClick={handleDisconnect}>End Session</button>
           ) : (

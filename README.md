@@ -19,8 +19,7 @@ npm install
 # Start app (Expo)
 npm start
 ```
-
-##🎬 Presentation Video
+## 🎬 Presentation Video
 
 Watch the 5–7 minute walkthrough of the project here:
 👉 AI Journaling App – [Project Demo](https://www.youtube.com/watch?v=BEo1OmsmeAM).

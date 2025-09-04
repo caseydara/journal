@@ -145,6 +145,8 @@ export default function Assistant() {
     setConnectError(null);
     startupSpokenRef.current = false;
     try {
+      console.log(API_URL)
+      console.log(process.env.REACT_APP_API_URL)
       const resp = await fetch(`${API_URL}/hume-token`);
       const j = await resp.json();
       if (!j.accessToken) throw new Error("no token");

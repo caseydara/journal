@@ -13,12 +13,17 @@ This repository contains:
 - Required project files and dependencies.  
 - A working prototype of the journaling assistant.
 
+Before running make sure to add the necessary .env variables. 
+
 Run locally:
 ```bash
 # Install dependencies
 npm install
 
 # Start app (Expo)
+npm start
+
+# Start Server node index.js
 npm start
 ```
 ## 🎬 Presentation Video

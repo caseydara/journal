@@ -5,7 +5,7 @@ The assistant builds continuity across entries, tracks mood trends, and summariz
 
 ---
 ## 💻 Functional Prototype 
-[https://journal-2-11om.onrender.com/history](https://journal-2-11om.onrender.com/history)
+[https://journal-2-11om.onrender.com](https://journal-2-11om.onrender.com)
 
 ## 🚀 Demo 
 This repository contains:  

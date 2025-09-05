@@ -24,7 +24,7 @@ npm install
 npm start
 
 # Start Server node index.js
-npm start
+node index.js
 ```
 ## 🎬 Presentation Video
 

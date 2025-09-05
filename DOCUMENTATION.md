@@ -44,4 +44,9 @@ The AI Journaling App is a **React Native mobile application** that guides users
 - **State Management:** Redux Toolkit or React Query (for async state).  
 
 ### Backend
-  - Local storage with `AsyncStorage` 
+  - Local storage with `AsyncStorage`
+
+## 5. Future Enhancements
+- Improved voice assistant: less follow up questions, The current assistant sometimes asks too many questions at once
+- Improved dashboard tracking + insights
+- Improved security & account set up

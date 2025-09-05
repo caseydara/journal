@@ -1,7 +1,7 @@
 # 📝 AI Journaling Assistant – Design Documentation
 
 ## 1. Overview
-The AI Journaling App is a **React Native mobile application** that guides users through daily reflective prompts using a personal assistant. The assistant builds continuity across entries, referencing past reflections to encourage deeper insights. It also tracks **mood trends, daily takeaways, and journaling streaks**.
+The AI Journaling App is a **React Native mobile application** that guides users through daily reflective prompts using a personal assistant. The assistant builds continuity across entries, referencing past reflections to encourage deeper insights. It also tracks **mood trends and daily takeaways**.
 
 ---
 
@@ -44,19 +44,4 @@ The AI Journaling App is a **React Native mobile application** that guides users
 - **State Management:** Redux Toolkit or React Query (for async state).  
 
 ### Backend
-- **Option A (Simple MVP):**  
-  - Local storage with `AsyncStorage` or SQLite.  
-- **Option B (Scalable):**  
-  - Node.js / Express backend or Supabase/Firebase.  
-  - Cloud DB (Postgres, Firestore) for syncing across devices.  
-
-### Database Schema (simplified)
-```sql
-JournalEntry {
-  id: UUID (Primary Key)
-  date: Date
-  prompt: Text
-  response: Text
-  mood: String
-  takeaway: Text
-}
+  - Local storage with `AsyncStorage` 

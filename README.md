@@ -4,8 +4,10 @@ An AI-powered journaling app built with **React Native** and the **Hume API**  t
 The assistant builds continuity across entries, tracks mood trends, and summarizes key takeaways for personal growth.  
 
 ---
+## 💻 Functional Prototype 
+[https://journal-2-11om.onrender.com/history](https://journal-2-11om.onrender.com/history)
 
-## 🚀 Working Prototype / Demo 💻
+## 🚀 Demo 
 This repository contains:  
 - Source code for the functional application.  
 - Required project files and dependencies.  

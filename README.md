@@ -1,6 +1,6 @@
 # 📓 AI Journaling Assistant
 
-An AI-powered journaling app built with **React Native** and the **Hume API**  the  that guides users through reflective daily prompts.  
+An AI-powered journaling app built with **React** and the **Hume API**  the  that guides users through reflective daily prompts.  
 The assistant builds continuity across entries, tracks mood trends, and summarizes key takeaways for personal growth.  
 
 ---
@@ -9,7 +9,7 @@ The assistant builds continuity across entries, tracks mood trends, and summariz
 
 ## 🚀 Demo 
 This repository contains:  
-- Source code for the functional application.  
+- Source code for the functional web application.  
 - Required project files and dependencies.  
 - A working prototype of the journaling assistant.
 

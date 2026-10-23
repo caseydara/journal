@@ -10,6 +10,7 @@ Watch walkthrough of the project here:
 👉 AI Journaling App – [Project Demo](https://www.youtube.com/watch?v=BEo1OmsmeAM).
 
 ## 💻 Functional Prototype 
+❗❗ No longer functional since the Hume subscription has ended, see walkthrough for live demo❗❗
 [https://journal-2-11om.onrender.com](https://journal-2-11om.onrender.com)
 
 ## 🚀 Demo 

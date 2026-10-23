@@ -4,6 +4,11 @@ An AI-powered journaling web application built with **React** and the **Hume API
 The assistant builds continuity across entries, tracks mood trends, and summarizes key takeaways for personal growth.  
 
 ---
+## 🎬 Presentation Video
+
+Watch walkthrough of the project here:
+👉 AI Journaling App – [Project Demo](https://www.youtube.com/watch?v=BEo1OmsmeAM).
+
 ## 💻 Functional Prototype 
 [https://journal-2-11om.onrender.com](https://journal-2-11om.onrender.com)
 
@@ -26,8 +31,4 @@ npm start
 # Start Server node index.js
 node index.js
 ```
-## 🎬 Presentation Video
-
-Watch walkthrough of the project here:
-👉 AI Journaling App – [Project Demo](https://www.youtube.com/watch?v=BEo1OmsmeAM).
 
